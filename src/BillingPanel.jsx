@@ -1,15 +1,12 @@
 // src/BillingPanel.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as XLSX from "xlsx";
 import "./BillingPanel.css";
 
 import {
-  apiBillingSuggest,
   apiCheckAvailability,
   apiPurchasesLast,
   apiCreateSaleFIFO,
   apiAccountsSuggest,
-  apiAccountByMobile,
   apiAccountsSuggestName,
   apiAccountById,
 } from "./api";
@@ -27,52 +24,29 @@ const emptyLine = () => ({
   unit: "KG",
 });
 
-const fmtDDMMYYYY = (iso) => {
-  const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2, "0")}-${String(
-    d.getMonth() + 1
-  ).padStart(2, "0")}-${d.getFullYear()}`;
-};
-
 const toINR = (n) =>
   (isNaN(n) ? 0 : n).toLocaleString("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 
-const n = (v) => (isNaN(Number(v)) || !v ? 0 : Number(v));
-
-const escapeHtml = (s) =>
-  String(s || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-
 /* =========================
    COMPONENT
 ========================= */
 
-export default function BillingPanel({ company, defaultBank, inventory }) {
+export default function BillingPanel({ company, defaultBank }) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+
   /* =========================
      BASIC STATE
   ========================= */
 
-  const todayIso = new Date().toISOString().slice(0, 10);
-
-  const [invoiceType, setInvoiceType] = useState("B2C");
+  const [invoiceType] = useState("B2C");
   const [paymentReceiptNo, setPaymentReceiptNo] = useState("");
 
-  const [invMeta, setInvMeta] = useState({
-    invoiceNo: "PKS-B-00001",
+  const [invMeta] = useState({
+    invoiceNo: "PKS-B-00001", // TODO: fetch from backend
     date: todayIso,
-    ewayNo: "",
-    vehicleNo: "",
-    kms: "",
-    fromDate: "",
-    toDate: "",
-    lrDate: todayIso,
   });
 
   /* =========================
@@ -90,8 +64,6 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
     state: "",
     stateCode: "",
     gstin: "",
-    email: "",
-    phone: "",
   });
 
   const [selectedAccount, setSelectedAccount] = useState(null);
@@ -107,52 +79,26 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
   useEffect(() => {
     clearTimeout(nameDebRef.current);
     nameDebRef.current = setTimeout(async () => {
-      const q = nameQuery.trim();
-      if (q.length < 2) return setNameSuggest([]);
+      if (nameQuery.trim().length < 2) {
+        setNameSuggest([]);
+        return;
+      }
       try {
-        const rows = await apiAccountsSuggestName(q, 10);
+        const rows = await apiAccountsSuggestName(nameQuery, 10);
         setNameSuggest(rows || []);
       } catch {
         setNameSuggest([]);
       }
-    }, 180);
+    }, 200);
 
     return () => clearTimeout(nameDebRef.current);
   }, [nameQuery]);
 
-  /* =========================
-     ACCOUNT SEARCH (MOBILE)
-  ========================= */
-
-  const [mobileQuery, setMobileQuery] = useState("");
-  const [mobileSuggest, setMobileSuggest] = useState([]);
-  const mobDebRef = useRef();
-
-  useEffect(() => {
-    clearTimeout(mobDebRef.current);
-    mobDebRef.current = setTimeout(async () => {
-      if (mobileQuery.length < 2) return setMobileSuggest([]);
-      try {
-        const rows = await apiAccountsSuggest(mobileQuery, 10);
-        setMobileSuggest(rows || []);
-      } catch {
-        setMobileSuggest([]);
-      }
-    }, 180);
-
-    return () => clearTimeout(mobDebRef.current);
-  }, [mobileQuery]);
-
-  /* =========================
-     ACCOUNT RESOLUTION
-  ========================= */
-
   const fillBuyerFromAccount = (acc) => {
     if (!acc) return;
 
-    setBuyer((b) => ({
-      ...b,
-      account_id: acc.account_id ?? acc.id ?? null,
+    setBuyer({
+      account_id: acc.account_id ?? acc.id,
       name: acc.name ?? acc.account_name ?? "",
       mobile: acc.mobile ?? "",
       addr1: acc.addr1 ?? "",
@@ -162,14 +108,11 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
       state: acc.state ?? "",
       stateCode: String(acc.stateCode ?? ""),
       gstin: acc.gstin ?? "",
-      email: acc.email ?? "",
-      phone: acc.phone ?? "",
-    }));
+    });
 
     setSelectedAccount({
       account_id: acc.account_id ?? acc.id,
       name: acc.name ?? acc.account_name,
-      mobile: acc.mobile,
     });
   };
 
@@ -189,27 +132,27 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
   const [statuses, setStatuses] = useState({});
   const [discountPct, setDiscountPct] = useState("0");
 
-  const updateAvailability = async (idx, name, qty) => {
-    if (!name) return;
+  const updateAvailability = async (idx, itemName, qty) => {
+    if (!itemName) return;
     try {
-      const st = await apiCheckAvailability(name, Number(qty || 0));
+      const st = await apiCheckAvailability(itemName, Number(qty || 0));
       setStatuses((s) => ({ ...s, [idx]: st }));
     } catch {
       setStatuses((s) => ({ ...s, [idx]: null }));
     }
   };
 
-  const handleItemChange = async (idx, val) => {
+  const handleItemChange = async (idx, value) => {
     let picked = null;
     try {
-      picked = await apiPurchasesLast(val.trim());
+      picked = await apiPurchasesLast(value.trim());
     } catch {}
 
     setLines((prev) => {
       const next = [...prev];
       next[idx] = {
         ...next[idx],
-        itemName: val,
+        itemName: value,
         hsn: picked?.hsn ?? "",
         unitPrice: picked?.price ?? "",
         gst: picked?.gst ?? "",
@@ -217,8 +160,6 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
       if (idx === prev.length - 1) next.push(emptyLine());
       return next;
     });
-
-    updateAvailability(idx, val, lines[idx]?.qty);
   };
 
   /* =========================
@@ -226,28 +167,37 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
   ========================= */
 
   const computed = useMemo(() => {
-    const filled = lines.filter((l) => l.itemName && Number(l.qty) > 0);
+    const rows = lines.filter(
+      (l) => l.itemName && Number(l.qty) > 0 && Number(l.unitPrice) > 0
+    );
 
     let taxable = 0;
-    let gstRaw = 0;
-
-    filled.forEach((l) => {
-      const line = Number(l.qty) * Number(l.unitPrice);
-      taxable += line;
-      gstRaw += (line * Number(l.gst)) / 100;
+    rows.forEach((l) => {
+      taxable += Number(l.qty) * Number(l.unitPrice);
     });
 
-    const disc = (taxable * Number(discountPct || 0)) / 100;
-    const taxableAfter = taxable - disc;
+    const discountAmount =
+      (taxable * Number(discountPct || 0)) / 100;
+    const discountedTaxable = taxable - discountAmount;
+
+    let gstRaw = 0;
+    rows.forEach((l) => {
+      const lineValue =
+        Number(l.qty) * Number(l.unitPrice);
+      const ratio = lineValue / taxable || 0;
+      gstRaw +=
+        ((discountedTaxable * ratio) * Number(l.gst || 0)) / 100;
+    });
+
     const gstRounded = Math.round(gstRaw);
     const roundOff = gstRounded - gstRaw;
-    const grand = taxableAfter + gstRounded;
+    const grand = discountedTaxable + gstRounded;
 
     return {
-      rows: filled,
+      rows,
       taxable,
-      discountAmount: disc,
-      discountedTaxable: taxableAfter,
+      discountAmount,
+      discountedTaxable,
       gstRounded,
       roundOff,
       grand,
@@ -261,6 +211,11 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
   const saveBill = async () => {
     if (!selectedAccount?.account_id) {
       alert("Please select Account (Ledger)");
+      return;
+    }
+
+    if (computed.rows.length === 0) {
+      alert("Add at least one valid item");
       return;
     }
 
@@ -290,7 +245,7 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
     try {
       await apiCreateSaleFIFO(payload);
       alert("Sale saved successfully");
-    } catch (e) {
+    } catch {
       alert("Failed to save sale");
     }
   };
@@ -303,25 +258,24 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
     <div className="billing-full card">
       <h2>Billing Panel</h2>
 
-      <div>
-        <label>Buyer Name</label>
-        <input
-          value={buyer.name}
-          onChange={(e) => {
-            setBuyer((b) => ({ ...b, name: e.target.value }));
-            setNameQuery(e.target.value);
-          }}
-        />
-        {nameSuggest.length > 0 && (
-          <div className="suggest">
-            {nameSuggest.map((a) => (
-              <div key={a.account_id} onClick={() => pickName(a)}>
-                {a.name}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <label>Buyer Name</label>
+      <input
+        value={buyer.name}
+        onChange={(e) => {
+          setBuyer((b) => ({ ...b, name: e.target.value }));
+          setNameQuery(e.target.value);
+        }}
+      />
+
+      {nameSuggest.length > 0 && (
+        <div className="suggest">
+          {nameSuggest.map((a) => (
+            <div key={a.account_id} onClick={() => pickName(a)}>
+              {a.name}
+            </div>
+          ))}
+        </div>
+      )}
 
       <table className="items-table">
         <thead>
@@ -341,19 +295,23 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
               <td>
                 <input
                   value={l.itemName}
-                  onChange={(e) => handleItemChange(i, e.target.value)}
+                  onChange={(e) =>
+                    handleItemChange(i, e.target.value)
+                  }
                 />
               </td>
               <td>
                 <input
                   value={l.qty}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const v = e.target.value;
                     setLines((p) =>
                       p.map((r, x) =>
-                        x === i ? { ...r, qty: e.target.value } : r
+                        x === i ? { ...r, qty: v } : r
                       )
-                    )
-                  }
+                    );
+                    updateAvailability(i, l.itemName, v);
+                  }}
                 />
               </td>
               <td>
@@ -362,7 +320,9 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
                   onChange={(e) =>
                     setLines((p) =>
                       p.map((r, x) =>
-                        x === i ? { ...r, unitPrice: e.target.value } : r
+                        x === i
+                          ? { ...r, unitPrice: e.target.value }
+                          : r
                       )
                     )
                   }
@@ -380,7 +340,11 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
                   }
                 />
               </td>
-              <td>{toINR(Number(l.qty) * Number(l.unitPrice || 0))}</td>
+              <td>
+                {toINR(
+                  Number(l.qty) * Number(l.unitPrice || 0)
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -389,9 +353,7 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
       <div className="totals">
         <div>Taxable: {toINR(computed.taxable)}</div>
         <div>GST: {toINR(computed.gstRounded)}</div>
-        <div>
-          <b>Grand Total: {toINR(computed.grand)}</b>
-        </div>
+        <b>Grand Total: {toINR(computed.grand)}</b>
       </div>
 
       <button className="btn primary" onClick={saveBill}>
