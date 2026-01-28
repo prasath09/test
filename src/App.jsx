@@ -124,7 +124,7 @@ export default function App() {
         </header>
 
         <div className="tabs">
-          {["billing", "returns", "items", "company", "accounts"].map((t) => (
+          {["billing"].map((t) => (
             <button
               key={t}
               className={`tab ${tab === t ? "active" : ""}`}
